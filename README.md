@@ -107,7 +107,7 @@ This project is licensed under the MIT License.
 
 ### Student Demo
 
-[![Student Demo](student.mp4)]
+student.mp4
 
 ### Teacher Demo
 
