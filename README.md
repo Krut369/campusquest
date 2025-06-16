@@ -114,9 +114,9 @@ https://github.com/user-attachments/assets/4d405968-7abf-4420-9acc-c3e0669618c9
 
 ###
 
-https://github.com/user-attachments/assets/abffa4db-90d4-43a8-a0de-aa0c321909b5
+Instructor
 
- Teacher Demo
+https://github.com/user-attachments/assets/abffa4db-90d4-43a8-a0de-aa0c321909b5
 
 
 ### Admin Demo
