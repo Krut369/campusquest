@@ -107,7 +107,7 @@ This project is licensed under the MIT License.
 
 ### Student Demo
 
-<video src="student.mp4" controls></video>
+<video src="https://raw.githubusercontent.com/Krut369/campusquest/main/student.mp4" controls width="100%"></video>
 
 ### Teacher Demo
 
