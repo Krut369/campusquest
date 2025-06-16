@@ -1,0 +1,521 @@
+Below is the final complete schema that meets your requirements. In this design, we assume:
+
+- There is only one section per course offering (so we don’t need a separate section table).
+- Courses are marked as **core** or **optional**.
+- Programs link to courses via the **program_courses** table.
+- Student enrollment is tracked in the **enrollment** table.
+- Instructors, assignments, notes, attendance, timetable, etc. are all included.
+- Events can be linked to multiple programs via the **event_program** join table.
+
+You can execute these queries (in order) in the Supabase SQL Editor.
+
+---
+
+### **1. Users**
+
+Holds authentication data and role information.
+
+```sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    phone_number VARCHAR(15) NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('student', 'instructor', 'admin')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+
+---
+
+```sql
+-- Create the classroom table
+CREATE TABLE classroom (
+    classroom_id VARCHAR(12) PRIMARY KEY,
+    building VARCHAR(50) NOT NULL,
+    room_number VARCHAR(10) NOT NULL,
+    capacity INT CHECK (capacity > 0)
+);
+
+-- Create a sequence for auto-incrementing classroom_id
+CREATE SEQUENCE classroom_seq START 1 INCREMENT 1;
+
+-- Create a function to generate classroom_id
+CREATE OR REPLACE FUNCTION generate_classroom_id()
+RETURNS TRIGGER AS $$
+DECLARE
+    new_id VARCHAR(12);
+BEGIN
+    -- Generate the new ID in format CLSNNNN
+    new_id := 'CLS' || LPAD(nextval('classroom_seq')::TEXT, 4, '0');
+    
+    -- Assign the new ID to classroom_id
+    NEW.classroom_id := new_id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create a trigger to execute function before insert
+CREATE TRIGGER classroom_id_trigger
+BEFORE INSERT ON classroom
+FOR EACH ROW
+EXECUTE FUNCTION generate_classroom_id();
+
+-- Insert example data
+INSERT INTO classroom (building, room_number, capacity) VALUES ('Main Hall', '101', 50);
+INSERT INTO classroom (building, room_number, capacity) VALUES ('Science Block', '202', 40);
+INSERT INTO classroom (building, room_number, capacity) VALUES ('Library Wing', '303', 30);
+
+-- Select data to verify
+SELECT * FROM classroom;
+```
+
+
+
+### **2. Department**
+
+Stores department details.
+
+```sql
+CREATE TABLE department (
+    dept_name VARCHAR(20) PRIMARY KEY,
+    building VARCHAR(50),
+    budget NUMERIC(12,2) CHECK (budget > 0)
+);
+```
+
+---
+
+### **3. Program**
+
+Defines academic programs, each linked to a department.
+
+```sql
+-- Step 1: Create the program table
+CREATE TABLE program (
+    program_id TEXT PRIMARY KEY,        -- Auto-generated unique ID
+    program_name TEXT NOT NULL UNIQUE,  -- Unique program names
+    dept_name TEXT,                     -- Department name
+    created_at TIMESTAMPTZ DEFAULT NOW(), -- Timestamp
+    FOREIGN KEY (dept_name) REFERENCES department(dept_name) ON DELETE SET NULL
+);
+
+-- Step 2: Create a counter table to track program codes
+CREATE TABLE program_counter (
+    program_code TEXT PRIMARY KEY,
+    counter INT DEFAULT 0
+);
+
+-- Step 3: Function to auto-generate program_id
+CREATE OR REPLACE FUNCTION generate_program_id() 
+RETURNS TRIGGER AS $$
+DECLARE
+    pcode TEXT;      -- Renamed local variable to avoid ambiguity
+    serial_number INT;
+BEGIN
+    -- Generate initials from program_name (e.g., "Computer Science" → "CS")
+    SELECT UPPER(string_agg(LEFT(word, 1), ''))
+    INTO pcode
+    FROM regexp_split_to_table(NEW.program_name, ' ') AS word;
+
+    -- Check if the pcode exists in the counter table
+    SELECT pc.counter INTO serial_number 
+    FROM program_counter pc 
+    WHERE pc.program_code = pcode;
+
+    -- If first time, initialize the counter
+    IF serial_number IS NULL THEN
+        serial_number := 1;
+        INSERT INTO program_counter (program_code, counter) VALUES (pcode, serial_number);
+    ELSE
+        serial_number := serial_number + 1;
+        UPDATE program_counter pc 
+        SET counter = serial_number 
+        WHERE pc.program_code = pcode;
+    END IF;
+
+    -- Generate program_id (e.g., "CS01")
+    NEW.program_id := pcode || LPAD(serial_number::TEXT, 2, '0');
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Step 4: Create a trigger to apply the function before inserting a program
+CREATE TRIGGER program_id_trigger
+BEFORE INSERT ON program
+FOR EACH ROW
+EXECUTE FUNCTION generate_program_id();
+
+```
+
+---
+
+### **4. Course**
+
+Stores all courses and distinguishes between core and optional.
+
+```sql
+CREATE TABLE course (
+    course_id VARCHAR(8) PRIMARY KEY,
+    title VARCHAR(50) NOT NULL,
+    credits NUMERIC(2,0) CHECK (credits > 0),
+    course_type VARCHAR(10) NOT NULL CHECK (course_type IN ('core', 'optional'))
+);
+```
+
+---
+
+### **5. Program_Courses**
+
+Links programs to courses and, for electives, defines grouping and limits.
+
+```sql
+CREATE TABLE program_courses (
+    program_id VARCHAR(8),
+    course_id VARCHAR(8),
+    is_compulsory BOOLEAN DEFAULT TRUE,  -- TRUE for core, FALSE for elective
+    elective_group_id INT DEFAULT NULL,   -- Group identifier for electives
+    elective_limit INT DEFAULT NULL,        -- How many electives to choose from this group
+    PRIMARY KEY (program_id, course_id),
+    FOREIGN KEY (program_id) REFERENCES program(program_id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES course(course_id) ON DELETE CASCADE
+);
+```
+
+---
+
+### **6. Student**
+
+Holds student details and links them to a program and department.
+
+```sql
+CREATE TABLE student (
+    student_id VARCHAR(8) PRIMARY KEY,
+    user_id INT UNIQUE NOT NULL,               -- Links to the users table (holds name, email, phone, etc.)
+    name VARCHAR(100) NOT NULL,                -- Full name of the student
+    date_of_birth DATE CHECK (date_of_birth < CURRENT_DATE), -- Ensure valid birth date
+    gender VARCHAR(10) CHECK (gender IN ('Male', 'Female', 'Other')), -- Restrict gender values
+    address TEXT,
+    city VARCHAR(50),
+    state VARCHAR(50),
+    country VARCHAR(50),
+    postal_code VARCHAR(20),
+    dept_name VARCHAR(20),
+    program_id VARCHAR(8),
+    profile_picture_path VARCHAR(255),          -- Path to the profile picture
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (dept_name) REFERENCES department(dept_name) ON DELETE SET NULL,
+    FOREIGN KEY (program_id) REFERENCES program(program_id) ON DELETE CASCADE,
+    CONSTRAINT chk_postal_code CHECK (postal_code ~ '^[A-Za-z0-9 -]+$') -- Validate postal code format
+);
+`-- Step 5: Create Helper Table to Track Student Counter Per Program CREATE TABLE student_sequence (     program_id VARCHAR(8) PRIMARY KEY,     counter INT DEFAULT 0 );  -- Step 6: Create Function to Generate Student ID CREATE OR REPLACE FUNCTION generate_student_id() RETURNS TRIGGER AS $$ DECLARE     current_counter INT;     prefix TEXT;     prog_id TEXT; BEGIN     -- Use program_id or default to 'DF' (for unassigned students)     prog_id := COALESCE(NEW.program_id, 'DF');     prefix := LEFT(prog_id, 2);  -- Extract first 2 characters (e.g., CS, IT)      -- Retrieve or initialize the counter for this program_id     SELECT counter INTO current_counter FROM student_sequence WHERE program_id = prog_id;      IF current_counter IS NULL THEN         current_counter := 1;         INSERT INTO student_sequence (program_id, counter) VALUES (prog_id, current_counter);     ELSE         current_counter := current_counter + 1;         UPDATE student_sequence SET counter = current_counter WHERE program_id = prog_id;     END IF;      -- Generate student_id in the format: "CS001", "IT002", "DF001"     NEW.student_id := prefix || LPAD(current_counter::TEXT, 3, '0');          RETURN NEW; END; $$ LANGUAGE plpgsql;  -- Step 7: Create Trigger to Auto-Generate student_id Before Insert CREATE TRIGGER student_id_trigger BEFORE INSERT ON student FOR EACH ROW EXECUTE FUNCTION generate_student_id();`
+-- Indexes for frequently queried columns
+CREATE INDEX idx_student_program_id ON student(program_id);
+CREATE INDEX idx_student_dept_name ON student(dept_name);
+CREATE INDEX idx_student_name ON student(name);
+
+```
+
+---
+
+### **7. Instructor**
+
+Stores instructor profiles and links to a user account.
+
+```sql
+CREATE TABLE instructor (
+    instructor_id VARCHAR(8) PRIMARY KEY,
+    user_id INT UNIQUE NOT NULL,  -- Links to users table (holds email, phone, name, etc.)
+    name VARCHAR(100) NOT NULL,   -- Instructor's name
+    dept_name VARCHAR(20),
+    designation VARCHAR(50),      -- Additional instructor-specific detail (e.g., Professor, Lecturer)
+    qualification VARCHAR(100),   -- e.g., PhD, M.Tech, etc.
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (dept_name) REFERENCES department(dept_name) ON DELETE SET NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+```
+
+---
+
+### **8. Semester**
+
+Defines academic sessions.
+
+```sql
+-- Create the semester table
+CREATE TABLE semester (
+    semester_id VARCHAR(12) PRIMARY KEY,
+    year NUMERIC(4,0) NOT NULL CHECK (year >= 2000),
+    term VARCHAR(10) NOT NULL CHECK (term IN ('Spring', 'Summer', 'Fall', 'Winter'))
+);
+
+-- Create a sequence for auto-incrementing semester_id
+CREATE SEQUENCE semester_seq START 1 INCREMENT 1;
+
+-- Create a function to generate semester_id
+CREATE OR REPLACE FUNCTION generate_semester_id()
+RETURNS TRIGGER AS $$
+DECLARE
+    new_id VARCHAR(12);
+BEGIN
+    -- Generate the new ID in format SEMYYYYNNN
+    new_id := 'SEM' || NEW.year || LPAD(nextval('semester_seq')::TEXT, 3, '0');
+    
+    -- Assign the new ID to semester_id
+    NEW.semester_id := new_id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create a trigger to execute function before insert
+CREATE TRIGGER semester_id_trigger
+BEFORE INSERT ON semester
+FOR EACH ROW
+EXECUTE FUNCTION generate_semester_id();
+
+-- Insert example data
+INSERT INTO semester (year, term) VALUES (2025, 'Spring');
+INSERT INTO semester (year, term) VALUES (2025, 'Fall');
+INSERT INTO semester (year, term) VALUES (2026, 'Winter');
+
+-- Select data to verify
+SELECT * FROM semester;
+```
+
+---
+
+### **9. Enrollment**
+
+Tracks which students are enrolled in which courses for a given semester.
+
+```sql
+CREATE TABLE enrollment (
+    enrollment_id SERIAL PRIMARY KEY,
+    student_id VARCHAR(8) NOT NULL,
+    course_id VARCHAR(8) NOT NULL,
+    semester_id VARCHAR(8) NOT NULL,
+    enrollment_status VARCHAR(20) DEFAULT 'Active',
+    FOREIGN KEY (student_id) REFERENCES student(student_id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES course(course_id) ON DELETE CASCADE,
+    FOREIGN KEY (semester_id) REFERENCES semester(semester_id) ON DELETE CASCADE
+);
+```
+
+---
+
+### **10. Attendance**
+
+Records attendance for each student in a course on a specific date.
+
+```sql
+CREATE TABLE attendance (
+    attendance_id SERIAL PRIMARY KEY,
+    student_id VARCHAR(8) NOT NULL,
+    course_id VARCHAR(8) NOT NULL,
+    semester_id VARCHAR(8) NOT NULL,
+    attendance_date DATE NOT NULL,
+    status VARCHAR(10) CHECK (status IN ('Present', 'Absent', 'Late')),
+    FOREIGN KEY (student_id) REFERENCES student(student_id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES course(course_id) ON DELETE CASCADE,
+    FOREIGN KEY (semester_id) REFERENCES semester(semester_id) ON DELETE CASCADE
+);
+```
+
+---
+
+### **11. Time_Slot**
+
+Defines available lecture time slots.
+
+```sql
+-- Step 1: Create a sequence
+CREATE SEQUENCE time_slot_seq START 1;
+
+-- Step 2: Create the table without auto-increment on time_slot_id
+CREATE TABLE time_slot (
+    time_slot_id VARCHAR(6) PRIMARY KEY, -- Adjust length based on expected values
+    day VARCHAR(10) NOT NULL CHECK (day IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')),
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL CHECK (end_time > start_time)
+);
+
+-- Step 3: Create a trigger function to auto-generate time_slot_id
+CREATE OR REPLACE FUNCTION generate_time_slot_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.time_slot_id := 'TS' || LPAD(nextval('time_slot_seq')::TEXT, 2, '0');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Step 4: Attach the trigger to the time_slot table
+CREATE TRIGGER time_slot_trigger
+BEFORE INSERT ON time_slot
+FOR EACH ROW
+WHEN (NEW.time_slot_id IS NULL)
+EXECUTE FUNCTION generate_time_slot_id();
+```
+
+---
+
+### **12. Timetable**
+
+Schedules courses (for the single section scenario) with location details.
+
+```sql
+CREATE TABLE timetable (
+    timetable_id SERIAL PRIMARY KEY,
+    course_id VARCHAR(8) NOT NULL,
+    semester_id VARCHAR(8) NOT NULL,
+    time_slot_id VARCHAR(4) NOT NULL,
+    classroom_id VARCHAR(10) NOT NULL,
+    FOREIGN KEY (course_id) REFERENCES course(course_id) ON DELETE CASCADE,
+    FOREIGN KEY (semester_id) REFERENCES semester(semester_id) ON DELETE CASCADE,
+    FOREIGN KEY (time_slot_id) REFERENCES time_slot(time_slot_id) ON DELETE CASCADE,
+    FOREIGN KEY (classroom_id) REFERENCES classroom(classroom_id) ON DELETE CASCADE
+);
+
+```
+
+---
+
+### **13. Teaches**
+
+Assigns an instructor to a course in a specific semester.
+
+```sql
+CREATE TABLE teaches (
+    teaches_id SERIAL PRIMARY KEY,
+    instructor_id VARCHAR(20) NOT NULL,
+    course_id VARCHAR(20) NOT NULL,
+    semester_id VARCHAR(20) NOT NULL,
+    FOREIGN KEY (instructor_id) REFERENCES instructor(instructor_id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES course(course_id) ON DELETE CASCADE,
+    FOREIGN KEY (semester_id) REFERENCES semester(semester_id) ON DELETE CASCADE
+);
+
+```
+
+---
+
+### **14. Assignment**
+
+Stores assignment details created by instructors.
+
+```sql
+CREATE TABLE assignment (
+    assignment_id SERIAL PRIMARY KEY,
+    course_id VARCHAR(8) NOT NULL,
+    semester_id VARCHAR(8) NOT NULL,
+    title VARCHAR(100) NOT NULL,
+    description TEXT,
+    file_path VARCHAR(255),         -- Path to the assignment file
+    due_date DATE NOT NULL,
+    max_marks NUMERIC(4,0),
+    created_by VARCHAR(8) NOT NULL,   -- References instructor(instructor_id)
+    FOREIGN KEY (course_id) REFERENCES course(course_id) ON DELETE CASCADE,
+    FOREIGN KEY (semester_id) REFERENCES semester(semester_id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES instructor(instructor_id) ON DELETE CASCADE
+);
+
+```
+
+---
+
+### **15. Submission**
+
+Records student submissions for assignments.
+
+```sql
+CREATE TABLE submission (
+    submission_id SERIAL PRIMARY KEY,
+    assignment_id INT NOT NULL,
+    student_id VARCHAR(8) NOT NULL,
+    submission_date DATE,
+    file_path VARCHAR(255),
+    marks_obtained NUMERIC(4,0),
+    feedback TEXT,
+    FOREIGN KEY (assignment_id) REFERENCES assignment(assignment_id) ON DELETE CASCADE,
+    FOREIGN KEY (student_id) REFERENCES student(student_id) ON DELETE CASCADE
+);
+```
+
+---
+
+### **16. Notes**
+
+Stores lecture notes/materials uploaded by instructors.
+
+```sql
+CREATE TABLE notes (
+    note_id SERIAL PRIMARY KEY,
+    course_id VARCHAR(8) NOT NULL,
+    title VARCHAR(100) NOT NULL,
+    description TEXT,
+    file_path VARCHAR(255),
+    uploaded_by VARCHAR(8) NOT NULL,  -- references instructor_id
+    upload_date DATE DEFAULT CURRENT_DATE,
+    FOREIGN KEY (course_id) REFERENCES course(course_id) ON DELETE CASCADE,
+    FOREIGN KEY (uploaded_by) REFERENCES instructor(instructor_id) ON DELETE CASCADE
+);
+```
+
+---
+
+### **17. Event**
+
+Stores event details. (Events are created by Admin users.)
+
+```sql
+	CREATE TABLE event (
+    event_id SERIAL PRIMARY KEY,
+    title VARCHAR(100) NOT NULL,
+    description TEXT,
+    event_date DATE NOT NULL,
+    created_by INT,
+    document_path VARCHAR(255),  -- stores the file path or URL of the uploaded document
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+```
+
+---
+
+### **18. Event_Program**
+
+Associates events with multiple programs.
+
+```sql
+CREATE TABLE event_program (
+    event_id INT,
+    program_id VARCHAR(8),
+    PRIMARY KEY (event_id, program_id),
+    FOREIGN KEY (event_id) REFERENCES event(event_id) ON DELETE CASCADE,
+    FOREIGN KEY (program_id) REFERENCES program(program_id) ON DELETE CASCADE
+);
+```
+
+---
+
+### **Overview**
+
+- **User Management:** `users`
+- **Organizational Structure:** `department`, `program`
+- **Course & Program Mapping:** `course`, `program_courses`
+- **People:** `student`, `instructor`
+- **Academic Periods:** `semester`
+- **Enrollment & Attendance:** `enrollment`, `attendance`
+- **Scheduling:** `time_slot`, `timetable`, `teaches`
+- **Assignments & Submissions:** `assignment`, `submission`
+- **Course Materials:** `notes`
+- **Events:** `event`, `event_program`
+
+This schema supports the full range of features for students (timetable, attendance, assignments, notes, profile), instructors (uploading material, scheduling, assignments, attendance management), and admins (managing instructors, students, programs, courses, events, and timetables).
+
+Let me know if you need any further modifications or explanations!
