@@ -2,9 +2,6 @@
 
 CampusQuest is a cross-platform Flutter application designed for managing academic resources, notes, events, and user roles (students, instructors, admins) in a campus environment.
 
-### 🎬 Student Demo
-
-[![Watch Student Demo](https://via.placeholder.com/800x450.png?text=Student+Demo)](https://github.com/Krut369/campusquest/blob/main/student.mp4)
 
 ## Features
 
@@ -111,15 +108,23 @@ This project is licensed under the MIT License.
 
 ### Student Demo
 
-<video src="https://raw.githubusercontent.com/Krut369/campusquest/main/student.mp4" controls width="100%"></video>
 
-### Teacher Demo
+https://github.com/user-attachments/assets/4d405968-7abf-4420-9acc-c3e0669618c9
 
-[![Teacher Demo](instructor.mp4)]
+
+###
+
+https://github.com/user-attachments/assets/abffa4db-90d4-43a8-a0de-aa0c321909b5
+
+ Teacher Demo
+
 
 ### Admin Demo
 
-[![Admin Demo](admin.mp4)]
+
+https://github.com/user-attachments/assets/9a0f69e3-5e9e-41af-93b9-28f4fd2a943c
+
+
 ---
 
 For more information, see the [Flutter documentation](https://docs.flutter.dev/).
